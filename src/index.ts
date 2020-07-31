@@ -3,12 +3,13 @@ import {BitMatrix} from "./BitMatrix";
 import {Chunks} from "./decoder/decodeData";
 import {decode} from "./decoder/decoder";
 import {extract} from "./extractor";
-import {locate, Point} from "./locator";
+import {screen_locate, Point, Rect} from "./screen_locator";
 
 export interface QRCode {
   binaryData: number[];
   data: string;
   chunks: Chunks;
+  bounds: Rect;
   location: {
     topRightCorner: Point;
     topLeftCorner: Point;
@@ -23,8 +24,9 @@ export interface QRCode {
   };
 }
 
-function scan(matrix: BitMatrix): QRCode | null {
-  const locations = locate(matrix);
+function scan(matrix: BitMatrix): QRCode[] {
+  const result: QRCode[] = [];
+  const locations = screen_locate(matrix);
   if (!locations) {
     return null;
   }
@@ -33,10 +35,11 @@ function scan(matrix: BitMatrix): QRCode | null {
     const extracted = extract(matrix, location);
     const decoded = decode(extracted.matrix);
     if (decoded) {
-      return {
+      result.push({
         binaryData: decoded.bytes,
         data: decoded.text,
         chunks: decoded.chunks,
+        bounds: location.bounds,
         location: {
           topRightCorner: extracted.mappingFunction(location.dimension, 0),
           topLeftCorner: extracted.mappingFunction(0, 0),
@@ -49,10 +52,10 @@ function scan(matrix: BitMatrix): QRCode | null {
 
           bottomRightAlignmentPattern: location.alignmentPattern,
         },
-      };
+      });
     }
   }
-  return null;
+  return result;
 }
 
 export interface Options {
@@ -63,7 +66,7 @@ const defaultOptions: Options = {
   inversionAttempts: "attemptBoth",
 };
 
-function jsQR(data: Uint8ClampedArray, width: number, height: number, providedOptions: Options = {}): QRCode | null {
+function jsQR(data: Uint8ClampedArray, width: number, height: number, providedOptions: Options = {}): QRCode[] {
 
   const options = defaultOptions;
   Object.keys(options || {}).forEach(opt => { // Sad implementation of Object.assign since we target es5 not es6
@@ -73,9 +76,10 @@ function jsQR(data: Uint8ClampedArray, width: number, height: number, providedOp
   const shouldInvert = options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst";
   const tryInvertedFirst = options.inversionAttempts === "onlyInvert" || options.inversionAttempts === "invertFirst";
   const {binarized, inverted} = binarize(data, width, height, shouldInvert);
-  let result = scan(tryInvertedFirst ? inverted : binarized);
+  const result = scan(tryInvertedFirst ? inverted : binarized);
   if (!result && (options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst")) {
-    result = scan(tryInvertedFirst ? binarized : inverted);
+    const result2 = scan(tryInvertedFirst ? binarized : inverted);
+    result.push(...result2);
   }
   return result;
 }

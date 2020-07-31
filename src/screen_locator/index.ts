@@ -9,12 +9,20 @@ export interface Point {
   y: number;
 }
 
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface QRLocation {
   topRight: Point;
   bottomLeft: Point;
   topLeft: Point;
   alignmentPattern: Point;
   dimension: number;
+  bounds: Rect;
 }
 
 const distance = (a: Point, b: Point) => Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2);
@@ -249,173 +257,31 @@ interface Quad {
   };
 }
 
-export function locate_old(matrix: BitMatrix): QRLocation[] {
-  const finderPatternQuads: Quad[] = [];
-  let activeFinderPatternQuads: Quad[] = [];
-  const alignmentPatternQuads: Quad[] = [];
-  let activeAlignmentPatternQuads: Quad[] = [];
-
-  for (let y = 0; y <= matrix.height; y++) {
-    let length = 0;
-    let lastBit = false;
-    let scans = [0, 0, 0, 0, 0];
-
-    for (let x = -1; x <= matrix.width; x++) {
-      const v = matrix.get(x, y);
-      if (v === lastBit) {
-        length++;
-      } else {
-        scans = [scans[1], scans[2], scans[3], scans[4], length];
-        length = 1;
-        lastBit = v;
-
-        // Do the last 5 color changes ~ match the expected ratio for a finder pattern? 1:1:3:1:1 of b:w:b:w:b
-        const averageFinderPatternBlocksize = sum(scans) / 7;
-        const validFinderPattern =
-          Math.abs(scans[0] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize &&
-          Math.abs(scans[1] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize &&
-          Math.abs(scans[2] - 3 * averageFinderPatternBlocksize) < 3 * averageFinderPatternBlocksize &&
-          Math.abs(scans[3] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize &&
-          Math.abs(scans[4] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize &&
-          !v; // And make sure the current pixel is white since finder patterns are bordered in white
-
-        // Do the last 3 color changes ~ match the expected ratio for an alignment pattern? 1:1:1 of w:b:w
-        const averageAlignmentPatternBlocksize = sum(scans.slice(-3)) / 3;
-        const validAlignmentPattern =
-          Math.abs(scans[2] - averageAlignmentPatternBlocksize) < averageAlignmentPatternBlocksize &&
-          Math.abs(scans[3] - averageAlignmentPatternBlocksize) < averageAlignmentPatternBlocksize &&
-          Math.abs(scans[4] - averageAlignmentPatternBlocksize) < averageAlignmentPatternBlocksize &&
-          v; // Is the current pixel black since alignment patterns are bordered in black
-
-        if (validFinderPattern) {
-          // Compute the start and end x values of the large center black square
-          const endX = x - scans[3] - scans[4];
-          const startX = endX - scans[2];
-
-          const line = { startX, endX, y };
-          // Is there a quad directly above the current spot? If so, extend it with the new line. Otherwise, create a new quad with
-          // that line as the starting point.
-          const matchingQuads = activeFinderPatternQuads.filter(q =>
-            (startX >= q.bottom.startX && startX <= q.bottom.endX) ||
-            (endX >= q.bottom.startX && startX <= q.bottom.endX) ||
-            (startX <= q.bottom.startX && endX >= q.bottom.endX && (
-              (scans[2] / (q.bottom.endX - q.bottom.startX)) < MAX_QUAD_RATIO &&
-              (scans[2] / (q.bottom.endX - q.bottom.startX)) > MIN_QUAD_RATIO
-            )),
-          );
-          if (matchingQuads.length > 0) {
-            matchingQuads[0].bottom = line;
-          } else {
-            activeFinderPatternQuads.push({ top: line, bottom: line });
-          }
-        }
-        if (validAlignmentPattern) {
-          // Compute the start and end x values of the center black square
-          const endX = x - scans[4];
-          const startX = endX - scans[3];
-
-          const line = { startX, y, endX };
-          // Is there a quad directly above the current spot? If so, extend it with the new line. Otherwise, create a new quad with
-          // that line as the starting point.
-          const matchingQuads = activeAlignmentPatternQuads.filter(q =>
-            (startX >= q.bottom.startX && startX <= q.bottom.endX) ||
-            (endX >= q.bottom.startX && startX <= q.bottom.endX) ||
-            (startX <= q.bottom.startX && endX >= q.bottom.endX && (
-              (scans[2] / (q.bottom.endX - q.bottom.startX)) < MAX_QUAD_RATIO &&
-              (scans[2] / (q.bottom.endX - q.bottom.startX)) > MIN_QUAD_RATIO
-            )),
-          );
-          if (matchingQuads.length > 0) {
-            matchingQuads[0].bottom = line;
-          } else {
-            activeAlignmentPatternQuads.push({ top: line, bottom: line });
-          }
-        }
-      }
-    }
-    finderPatternQuads.push(...activeFinderPatternQuads.filter(q => q.bottom.y !== y && q.bottom.y - q.top.y >= 2));
-    activeFinderPatternQuads = activeFinderPatternQuads.filter(q => q.bottom.y === y);
-
-    alignmentPatternQuads.push(...activeAlignmentPatternQuads.filter(q => q.bottom.y !== y));
-    activeAlignmentPatternQuads = activeAlignmentPatternQuads.filter(q => q.bottom.y === y);
-
-  }
-
-  finderPatternQuads.push(...activeFinderPatternQuads.filter(q => q.bottom.y - q.top.y >= 2));
-  alignmentPatternQuads.push(...activeAlignmentPatternQuads);
-
-  const finderPatternGroups = finderPatternQuads
-    .filter(q => q.bottom.y - q.top.y >= 2) // All quads must be at least 2px tall since the center square is larger than a block
-    .map(q => { // Initial scoring of finder pattern quads by looking at their ratios, not taking into account position
-      const x = (q.top.startX + q.top.endX + q.bottom.startX + q.bottom.endX) / 4;
-      const y = (q.top.y + q.bottom.y + 1) / 2;
-      if (!matrix.get(Math.round(x), Math.round(y))) {
-        return;
-      }
-
-      const lengths = [q.top.endX - q.top.startX, q.bottom.endX - q.bottom.startX, q.bottom.y - q.top.y + 1];
-      const size = sum(lengths) / lengths.length;
-      const score = scorePattern({x: Math.round(x), y: Math.round(y)}, [1, 1, 3, 1, 1], matrix);
-      return { score, x, y, size };
-    })
-    .filter(q => !!q) // Filter out any rejected quads from above
-    .sort((a, b) => a.score - b.score)
-    // Now take the top finder pattern options and try to find 2 other options with a similar size.
-    .map((point, i, finderPatterns) => {
-      if (i > MAX_FINDERPATTERNS_TO_SEARCH) {
-        return null;
-      }
-      const otherPoints = finderPatterns
-        .filter((p, ii) => i !== ii)
-        .map(p => ({ x: p.x, y: p.y, score: p.score + ((p.size - point.size) ** 2) / point.size, size: p.size }))
-        .sort((a, b) => a.score - b.score);
-      if (otherPoints.length < 2) {
-        return null;
-      }
-      const score = point.score + otherPoints[0].score + otherPoints[1].score;
-      return {points: [point].concat(otherPoints.slice(0, 2)), score};
-    })
-    .filter(q => !!q) // Filter out any rejected finder patterns from above
-    .sort((a, b) => a.score - b.score);
-
-  if (finderPatternGroups.length === 0) {
-    return null;
-  }
-
-  const { topRight, topLeft, bottomLeft } = reorderFinderPatterns(
-    finderPatternGroups[0].points[0], finderPatternGroups[0].points[1], finderPatternGroups[0].points[2],
-  );
-  const alignment = findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, bottomLeft);
+export function screen_locate(matrix: BitMatrix): QRLocation[] {
   const result: QRLocation[] = [];
-  if (alignment) {
+  for (const pattern of locateTimingPatterns(matrix)) {
+    const topLeft: Point = {x: pattern.x + pattern.finderPatternWidth / 2,
+                            y: pattern.y + pattern.finderPatternHeight / 2};
+    const topRight: Point = {x: pattern.x + pattern.width - pattern.finderPatternWidth / 2,
+                             y: pattern.y + pattern.finderPatternHeight / 2};
+    const bottomLeft: Point = {x: pattern.x + pattern.finderPatternWidth / 2,
+                               y: pattern.y + pattern.height - pattern.finderPatternHeight / 2};
+    const alignmentPattern: Point = {x: pattern.x + pattern.width - pattern.finderPatternWidth * 13 / 14,
+                                     y: pattern.y + pattern.height - pattern.finderPatternHeight * 13 / 14};
     result.push({
-      alignmentPattern: { x: alignment.alignmentPattern.x, y: alignment.alignmentPattern.y },
-      bottomLeft: {x: bottomLeft.x, y: bottomLeft.y },
-      dimension: alignment.dimension,
-      topLeft: {x: topLeft.x, y: topLeft.y },
-      topRight: {x: topRight.x, y: topRight.y },
+      alignmentPattern,
+      bottomLeft,
+      dimension: pattern.dataBitsInRow,
+      topLeft,
+      topRight,
+      bounds: {
+        x: pattern.x,
+        y: pattern.y,
+        width: pattern.width,
+        height: pattern.height,
+      },
     });
   }
-
-  // We normally use the center of the quads as the location of the tracking points, which is optimal for most cases and will account
-  // for a skew in the image. However, In some cases, a slight skew might not be real and instead be caused by image compression
-  // errors and/or low resolution. For those cases, we'd be better off centering the point exactly in the middle of the black area. We
-  // compute and return the location data for the naively centered points as it is little additional work and allows for multiple
-  // attempts at decoding harder images.
-  const midTopRight = recenterLocation(matrix, topRight);
-  const midTopLeft = recenterLocation(matrix, topLeft);
-  const midBottomLeft = recenterLocation(matrix, bottomLeft);
-  const centeredAlignment = findAlignmentPattern(matrix, alignmentPatternQuads, midTopRight, midTopLeft, midBottomLeft);
-  if (centeredAlignment) {
-    result.push({
-      alignmentPattern: { x: centeredAlignment.alignmentPattern.x, y: centeredAlignment.alignmentPattern.y },
-      bottomLeft: { x: midBottomLeft.x, y: midBottomLeft. y },
-      topLeft: { x: midTopLeft.x, y: midTopLeft. y },
-      topRight: { x: midTopRight.x, y: midTopRight. y },
-      dimension: centeredAlignment.dimension,
-    });
-  }
-
   if (result.length === 0) {
     return null;
   }
@@ -427,6 +293,18 @@ export interface HorizontalTimingPattern {
   row: number;
   left: number;
   width: number;
+  finderPatternWidth: number;
+  dataBitsInRow: number;
+}
+
+export interface QrAreaFromTimingPattern {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  finderPatternWidth: number;
+  finderPatternHeight: number;
+  dataBitsInRow: number;
 }
 
 function checkForHorizontalTimingPatternFromFinderPatternSize(
@@ -441,6 +319,7 @@ function checkForHorizontalTimingPatternFromFinderPatternSize(
   const finderMinWidth = finderPatternWidth - 1;
   const finderMaxWidth = finderPatternWidth + 1;
   // console.assert(matrix.get(lastEdge, row));
+  let dataBitsInRow = 7;
   for (let x = lastEdge + 1; x < matrix.width; x++) {
     const black = matrix.get(x, row);
     if (lastEdgeDark && !black || !lastEdgeDark && black) {
@@ -448,12 +327,15 @@ function checkForHorizontalTimingPatternFromFinderPatternSize(
       if (width >= pixelMinWidth && width <= pixelMaxWidth) {
         lastEdgeDark = black;
         lastEdge = x;
+        dataBitsInRow ++;
         continue;
           // timing pattern pixel, keep looking
       } else if (width >= finderMinWidth && width <= finderMaxWidth) {
         if (lastEdgeDark) {
           return {
             row, left: finderPatternLeftX, width: x - finderPatternLeftX,
+            finderPatternWidth,
+            dataBitsInRow: dataBitsInRow + 7,
           };
         } else {
           break; // light block, this is not a timing pattern
@@ -483,12 +365,7 @@ export function locateHorizontalTimingPatterns(matrix: BitMatrix): HorizontalTim
           if (darkWidth > 7) { // Finder pattern minimum required pixels
             const timingPattern = checkForHorizontalTimingPatternFromFinderPatternSize(matrix, y, lastLightToDarkEdge, darkWidth);
             if (timingPattern) {
-              const lineAbove: HorizontalTimingPattern = {
-                row: timingPattern.row - 1,
-                left: timingPattern.left,
-                width: timingPattern.width,
-              };
-              timingPatterns = timingPatterns.filter(prev=>!(
+              timingPatterns = timingPatterns.filter(prev => !(
                   prev.row === timingPattern.row - 1 &&
                   prev.width === timingPattern.width &&
                   prev.left === timingPattern.left));
@@ -503,6 +380,81 @@ export function locateHorizontalTimingPatterns(matrix: BitMatrix): HorizontalTim
   }
 
   return timingPatterns;
+}
+
+function checkForTimingPatternFromHorizontalTimingPattern(
+    matrix: BitMatrix,
+    horizontalTimingPattern: HorizontalTimingPattern,
+    column: number): QrAreaFromTimingPattern | null {
+  let lastEdge = 0;
+  let lastEdgeDark = false;
+  const row = horizontalTimingPattern.row;
+  for (let y = lastEdge + 1; y < matrix.height && y <= row + 1; y++) {
+    const black2 = matrix.get(column, y);
+    if (lastEdgeDark && !black2 || !lastEdgeDark && black2) {
+      if (y >= row - 1 && lastEdgeDark) {
+        const top = lastEdge;
+        const finderPatternHeight = y - lastEdge;
+        lastEdgeDark = false;
+        lastEdge = y;
+        // top for loop will never be called again, continue to look for timing pattern here
+        const pixelMinHeight = Math.floor(finderPatternHeight / 7) - 1;
+        const pixelMaxHeight = Math.ceil(finderPatternHeight / 7) + 1;
+        const finderMinHeight = finderPatternHeight - 1;
+        const finderMaxHeight = finderPatternHeight + 1;
+        // console.assert(matrix.get(lastEdge, row));
+        for (y++; y < matrix.height; y++) {
+          const black = matrix.get(column, y);
+          if (lastEdgeDark && !black || !lastEdgeDark && black) {
+            const height = y - lastEdge;
+            if (height >= pixelMinHeight && height <= pixelMaxHeight) {
+              lastEdgeDark = black;
+              lastEdge = y;
+              continue;
+                // timing pattern pixel, keep looking
+            } else if (height >= finderMinHeight && height <= finderMaxHeight) {
+              if (lastEdgeDark) {
+                return {
+                  x: horizontalTimingPattern.left,
+                  y: top,
+                  width: horizontalTimingPattern.width,
+                  height: y - top,
+                  finderPatternWidth: horizontalTimingPattern.finderPatternWidth,
+                  finderPatternHeight,
+                  dataBitsInRow: horizontalTimingPattern.dataBitsInRow,
+                };
+              } else {
+                return null; // light block, this is not a timing pattern
+              }
+            } else {
+              return null; // not a timing pattern
+            }
+          }
+        }
+        return null;
+      }
+      lastEdgeDark = black2;
+      lastEdge = y;
+    }
+  }
+  return null;
+}
+
+export function locateTimingPatterns(matrix: BitMatrix): QrAreaFromTimingPattern[] {
+  const result: QrAreaFromTimingPattern[] = [];
+
+  for (const pattern of locateHorizontalTimingPatterns(matrix)) {
+    for (let delta = +1; delta >= -1; delta--) {
+      const found = checkForTimingPatternFromHorizontalTimingPattern(
+        matrix, pattern, pattern.left + pattern.finderPatternWidth - 1 + delta);
+      if (found) {
+        result.push(found);
+        break;
+      }
+    }
+  }
+
+  return result;
 }
 
 function findAlignmentPattern(matrix: BitMatrix, alignmentPatternQuads: Quad[], topRight: Point, topLeft: Point, bottomLeft: Point) {
