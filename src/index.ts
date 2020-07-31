@@ -3,10 +3,7 @@ import {BitMatrix} from "./BitMatrix";
 import {Chunks} from "./decoder/decodeData";
 import {decode} from "./decoder/decoder";
 import {screen_extract} from "./screen_extractor";
-import {screen_locate, Point, Rect} from "./screen_locator";
-
-import * as utils from '../tests/helpers';
-import * as fs from 'fs';
+import {screen_locate, Rect} from "./screen_locator";
 
 export interface QRCode {
   binaryData: number[];
