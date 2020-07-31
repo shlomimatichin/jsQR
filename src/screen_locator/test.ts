@@ -33,25 +33,35 @@ describe("screen locate", () => {
   it("find several timing patterns", async () => {
     const binarized = await loadBinarized("./src/screen_locator/test-data/presentation.png");
     expect(locateTimingPatterns(binarized)).toEqual(
-      [{finderPatternHeight: 38, finderPatternWidth: 38,
+      [{finderPatternHeight: 38, finderPatternWidth: 38, dataBitsInRow: 29,
         height: 160, width: 160, x: 566, y: 517},
-       {finderPatternHeight: 20, finderPatternWidth: 20,
+       {finderPatternHeight: 20, finderPatternWidth: 20, dataBitsInRow: 29,
         height: 87, width: 87, x: 1180, y: 547},
-       {finderPatternHeight: 15, finderPatternWidth: 15,
+       {finderPatternHeight: 15, finderPatternWidth: 15, dataBitsInRow: 29,
         height: 67, width: 67, x: 444, y: 733},
-       {finderPatternHeight: 20, finderPatternWidth: 20,
+       {finderPatternHeight: 20, finderPatternWidth: 20, dataBitsInRow: 29,
         height: 87, width: 87, x: 1169, y: 736}]);
   });
   it("full cycle", async () => {
     const image = await loadPng("./src/screen_locator/test-data/presentation.png");
     const result = jsQR(image.data, image.width, image.height, {inversionAttempts: "dontInvert"});
-    expect(result.map(r => ({data: r.data, bounds: r.bounds}))).toEqual([
-      {bounds: {height: 162, width: 162, x: 565, y: 516},
-       data: "engageli-op://\"{\\\"op\\\":\\\"PBM\\\"}\""},
-      {bounds: {height: 89, width: 89, x: 1179, y: 546},
-       data: "engageli-op://\"{\\\"op\\\":\\\"PBM\\\"}\""},
-      {bounds: {height: 89, width: 89, x: 1168, y: 735},
-       data: "engageli-op://\"{\\\"op\\\":\\\"PBM\\\"}\""}
+    expect(result.map((r) => ({ data: r.data, bounds: r.bounds }))).toEqual([
+      {
+        bounds: { height: 162, width: 162, x: 565, y: 516 },
+        data: 'engageli-op://"{\\"op\\":\\"PBM\\"}"',
+      },
+      {
+        bounds: { height: 89, width: 89, x: 1179, y: 546 },
+        data: 'engageli-op://"{\\"op\\":\\"PBM\\"}"',
+      },
+      {
+        bounds: { height: 68, width: 68, x: 443, y: 732 },
+        data: 'engageli-op://"{\\"op\\":\\"PBM\\"}"',
+      },
+      {
+        bounds: { height: 89, width: 89, x: 1168, y: 735 },
+        data: 'engageli-op://"{\\"op\\":\\"PBM\\"}"',
+      },
     ]);
   });
 });

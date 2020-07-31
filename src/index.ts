@@ -2,26 +2,17 @@ import {binarize} from "./binarizer";
 import {BitMatrix} from "./BitMatrix";
 import {Chunks} from "./decoder/decodeData";
 import {decode} from "./decoder/decoder";
-import {extract} from "./extractor";
+import {screen_extract} from "./screen_extractor";
 import {screen_locate, Point, Rect} from "./screen_locator";
+
+import * as utils from '../tests/helpers';
+import * as fs from 'fs';
 
 export interface QRCode {
   binaryData: number[];
   data: string;
   chunks: Chunks;
   bounds: Rect;
-  location: {
-    topRightCorner: Point;
-    topLeftCorner: Point;
-    bottomRightCorner: Point;
-    bottomLeftCorner: Point;
-
-    topRightFinderPattern: Point;
-    topLeftFinderPattern: Point;
-    bottomLeftFinderPattern: Point;
-
-    bottomRightAlignmentPattern?: Point;
-  };
 }
 
 function scan(matrix: BitMatrix): QRCode[] {
@@ -32,26 +23,14 @@ function scan(matrix: BitMatrix): QRCode[] {
   }
 
   for (const location of locations) {
-    const extracted = extract(matrix, location);
-    const decoded = decode(extracted.matrix);
+    const extracted = screen_extract(matrix, location.bounds, location.dimension);
+    const decoded = decode(extracted);
     if (decoded) {
       result.push({
         binaryData: decoded.bytes,
         data: decoded.text,
         chunks: decoded.chunks,
         bounds: location.bounds,
-        location: {
-          topRightCorner: extracted.mappingFunction(location.dimension, 0),
-          topLeftCorner: extracted.mappingFunction(0, 0),
-          bottomRightCorner: extracted.mappingFunction(location.dimension, location.dimension),
-          bottomLeftCorner: extracted.mappingFunction(0, location.dimension),
-
-          topRightFinderPattern: location.topRight,
-          topLeftFinderPattern: location.topLeft,
-          bottomLeftFinderPattern: location.bottomLeft,
-
-          bottomRightAlignmentPattern: location.alignmentPattern,
-        },
       });
     }
   }
